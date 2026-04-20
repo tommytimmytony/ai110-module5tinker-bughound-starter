@@ -79,7 +79,7 @@ class BugHoundAgent:
         issues = self._parse_json_array_of_issues(raw)
 
         if issues is None:
-            self._log("ANALYZE", "LLM output was not parseable JSON. Falling back to heuristics.")
+            self._log("ANALYZE", "LLM output was not acceptable (unparseable or invalid schema). Falling back to heuristics.")
             return self._heuristic_analyze(code_snippet)
 
         return issues
@@ -126,7 +126,7 @@ class BugHoundAgent:
     def _heuristic_analyze(self, code: str) -> List[Dict[str, str]]:
         issues: List[Dict[str, str]] = []
 
-        if "print(" in code:
+        if re.search(r'^\s*print\s*\(', code, re.MULTILINE):
             issues.append(
                 {
                     "type": "Code Quality",
@@ -164,7 +164,7 @@ class BugHoundAgent:
         if any(i.get("type") == "Code Quality" for i in issues):
             if "import logging" not in fixed:
                 fixed = "import logging\n\n" + fixed
-            fixed = fixed.replace("print(", "logging.info(")
+            fixed = re.sub(r'^(\s*)print\(', r'\1logging.info(', fixed, flags=re.MULTILINE)
 
         return fixed
 
@@ -175,15 +175,38 @@ class BugHoundAgent:
         text = text.strip()
         parsed = self._try_json_loads(text)
         if isinstance(parsed, list):
-            return self._normalize_issues(parsed)
+            normalized = self._normalize_issues(parsed)
+            if not self._issues_are_valid(normalized):
+                self._log("ANALYZE", "LLM returned issues with unrecognized severity values or missing msg. Falling back to heuristics.")
+                return None
+            return normalized
 
         array_str = self._extract_first_json_array(text)
         if array_str:
             parsed2 = self._try_json_loads(array_str)
             if isinstance(parsed2, list):
-                return self._normalize_issues(parsed2)
+                normalized2 = self._normalize_issues(parsed2)
+                if not self._issues_are_valid(normalized2):
+                    self._log("ANALYZE", "LLM returned issues with unrecognized severity values or missing msg. Falling back to heuristics.")
+                    return None
+                return normalized2
 
         return None
+
+    def _issues_are_valid(self, issues: List[Dict[str, str]]) -> bool:
+        """Reject LLM output where any issue has a non-standard severity or empty msg.
+
+        Severity must be exactly Low, Medium, or High — matching what risk_assessor.py
+        scores against. Any other value silently bypasses risk deductions, so we catch
+        it here and fall back to heuristics instead of accepting corrupt scoring data.
+        """
+        valid_severities = {"Low", "Medium", "High"}
+        for issue in issues:
+            if issue.get("severity") not in valid_severities:
+                return False
+            if not issue.get("msg", "").strip():
+                return False
+        return True
 
     def _normalize_issues(self, arr: List[Any]) -> List[Dict[str, str]]:
         issues: List[Dict[str, str]] = []

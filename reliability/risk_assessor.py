@@ -63,6 +63,27 @@ def assess_risk(
         reasons.append("Bare except was modified, verify correctness.")
 
     # ----------------------------
+    # New dependency check
+    # ----------------------------
+    original_imports = {
+        line.strip()
+        for line in original_code.splitlines()
+        if line.strip().startswith(("import ", "from "))
+    }
+    fixed_imports = {
+        line.strip()
+        for line in fixed_code.splitlines()
+        if line.strip().startswith(("import ", "from "))
+    }
+    new_imports = fixed_imports - original_imports
+    if new_imports:
+        score -= 25
+        reasons.append(
+            f"Fix introduces new import(s): {', '.join(sorted(new_imports))}. "
+            "New dependencies may fail at runtime or have side effects."
+        )
+
+    # ----------------------------
     # Clamp score
     # ----------------------------
     score = max(0, min(100, score))

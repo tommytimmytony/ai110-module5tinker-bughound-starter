@@ -38,6 +38,21 @@ def test_offline_mode_proposes_logging_fix_for_print():
     assert "logging.info(" in fixed
 
 
+def test_heuristic_does_not_flag_print_inside_string_literal():
+    # Regression: bare str.replace("print(", ...) flagged and corrupted string literals.
+    # Detection must use a line-anchored regex so only standalone print() calls trigger.
+    agent = BugHoundAgent(client=None)
+    code = 'def explain():\n    return "Use print(x) to display output"\n'
+    result = agent.run(code)
+
+    assert not any(issue.get("type") == "Code Quality" for issue in result["issues"]), (
+        "print( inside a string literal must not be treated as a real print() call"
+    )
+    assert '"Use print(x) to display output"' in result["fixed_code"], (
+        "Heuristic fixer must not corrupt string literals containing 'print('"
+    )
+
+
 def test_mock_client_forces_llm_fallback_to_heuristics_for_analysis():
     # MockClient returns non-JSON for analyzer prompts, so agent should fall back.
     agent = BugHoundAgent(client=MockClient())
